@@ -1,29 +1,54 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "SoundIt",
+    "slug": "soundit",
+    "scheme": "com.soundit.app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
+      "backgroundColor": "#1a1a1a"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1a1a1a"
       },
-      "edgeToEdgeEnabled": true
+      "package": "com.soundit.app",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+     
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.soundit.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-av",
+      [
+        "expo-system-ui",
+        {
+          "androidNavigationBarColor": "#1a1a1a"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a6a33184-db92-435b-abd5-cef7e48837f2"
+      }
     }
   }
 }

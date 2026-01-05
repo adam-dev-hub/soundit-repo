@@ -1,24 +1,18 @@
-<h1 align="center">Welcome to Quiz'TIC 👋</h1>
+<h1 align="center">Welcome to SoundIt 👋</h1>
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2-blue.svg?cacheSeconds=2592000" />
-  <a href="https://farjeoui-portfolio.vercel.app/projects/QuizTIC-Mobile" target="_blank">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue.svg?cacheSeconds=2592000" />
+  <a href="https://https://farjeoui-portfolio.vercel.app/projects/SoundIt-Mobile" target="_blank">
     <img alt="Documentation" src="https://img.shields.io/badge/documentation-yes-brightgreen.svg" />
   </a>
 </p>
 
-> Quiz'TIC est une application mobile innovante conçue pour transformer l'expérience d'évaluation pédagogique. Elle permet aux enseignants de créer et gérer des quiz interactifs en temps réel, tout en offrant aux étudiants une interface ludique et engageante pour participer et suivre leurs progrès.
+> Avec SoundIt, transformez votre Google Drive en véritable lecteur musical : lecture fluide, waveform réaliste pour une meilleure immersion, mode offline, téléchargement récursif de dossiers entiers et gestion complète des playlists et des bibliothèques d’artistes — avec davantage de sources cloud à venir.​
 
 
 ## Install
 
 ```sh
 npm install
-```
-
-## Test with Expo Go
-
-```sh
-npm run start 
 ```
 
 ## Test on Android device using devtools (AndroidSDK required)
