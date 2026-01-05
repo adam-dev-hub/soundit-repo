@@ -46,6 +46,8 @@ import {
   Info,
   Trash2,
   X,
+  Shuffle,     
+  ListMusic 
 } from 'lucide-react-native';
 import { useAudio } from '../context/AudioContext';
 import { useRouter } from 'expo-router';
@@ -206,6 +208,8 @@ export default function PlayerScreen() {
     playPrevious,
     seekTo,
     toggleRepeat,
+    isShuffled,          
+    toggleShuffle,
   } = useAudio();
 
   const router = useRouter();
@@ -237,6 +241,13 @@ const [scrubbingTime, setScrubbingTime] = useState(null);
     setScrubbingTime(null);
   }
 }, [scrubbingProgress.value, duration]);
+
+ const getSequenceIcon = () => {
+    if (isShuffled) {
+      return <Shuffle size={24} color="#FF5500" strokeWidth={2} />;
+    }
+    return <ListMusic size={24} color="#fff" strokeWidth={2} />;
+  };
 
 
  
@@ -600,7 +611,7 @@ const panGesture = useMemo(() =>
                 </View>
 
                 {/* Bottom Bar */}
-                <View style={styles.bottomBar}>
+                                <View style={styles.bottomBar}>
                   <TouchableOpacity 
                     onPress={toggleRepeat} 
                     style={styles.repeatButton}
@@ -608,6 +619,15 @@ const panGesture = useMemo(() =>
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
                     {getRepeatIcon()}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={toggleShuffle}
+                    style={styles.sequenceButton}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    {getSequenceIcon()}
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1000,4 +1020,7 @@ scrubbingTimeText: {
   optionTextDanger: {
     color: '#FF4444',
   },
+   sequenceButton: {
+    padding: 12,
+  }
 });
