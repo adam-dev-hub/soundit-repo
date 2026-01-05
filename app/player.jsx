@@ -908,11 +908,15 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   bottomBar: {
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.1)',
-  },
+  flexDirection: 'row',          // ensure side-by-side
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 16,                       // space between buttons
+  paddingTop: 12,
+  paddingBottom: 12,
+  borderTopWidth: StyleSheet.hairlineWidth,
+  borderTopColor: 'rgba(255,255,255,0.1)',
+},
   repeatButton: {
     padding: 12,
   },
