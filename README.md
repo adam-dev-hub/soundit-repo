@@ -1,7 +1,7 @@
 <h1 align="center">Welcome to SoundIt 👋</h1>
 <p>
   <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue.svg?cacheSeconds=2592000" />
-  <a href="https://https://farjeoui-portfolio.vercel.app/projects/SoundIt-Mobile" target="_blank">
+  <a href="https://farjeoui-portfolio.vercel.app/projects/SoundIt-Mobile" target="_blank">
     <img alt="Documentation" src="https://img.shields.io/badge/documentation-yes-brightgreen.svg" />
   </a>
 </p>
