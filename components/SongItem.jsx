@@ -47,7 +47,7 @@ export default function SongItem({ song, onPress, onOptions, isPlaying }) {
   };
 
   // Extract display info
-  let displayTitle = song.name || 'Unknown Title';
+  let displayTitle = song.title || song.name || 'Unknown Title';
   let displayArtist = song.artist || null;
 
   if (!displayArtist) {

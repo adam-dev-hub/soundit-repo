@@ -25,6 +25,44 @@ const decodeBase64 = (str) => {
 };
 
 export const audioAnalyzer = {
+  async writeMetadataToFile(fileUri, metadata) {
+    console.log('[FFmpeg] 🏷️ Writing tags to file...');
+    
+    // 1. Préparer les chemins
+    const inputPath = fileUri.replace('file://', '');
+    const outputPath = inputPath + '_tagged.mp3';
+
+    // 2. Nettoyer les textes pour la commande (échapper les guillemets)
+    const title = (metadata.title || '').replace(/"/g, '\\"');
+    const artist = (metadata.artist || '').replace(/"/g, '\\"');
+    const album = (metadata.album || '').replace(/"/g, '\\"');
+
+    // 3. Commande FFmpeg : Copie l'audio (-c copy) mais change les tags
+    const command = `-y -i "${inputPath}" -metadata title="${title}" -metadata artist="${artist}" -metadata album="${album}" -c copy "${outputPath}"`;
+
+    try {
+      const session = await FFmpegKit.execute(command);
+      const returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        console.log('[FFmpeg] ✅ Tags written successfully!');
+        
+        // 4. On remplace l'ancien fichier par le nouveau
+        await FileSystem.deleteAsync(fileUri, { idempotent: true });
+        await FileSystem.moveAsync({
+          from: 'file://' + outputPath,
+          to: fileUri
+        });
+        return true;
+      } else {
+        console.error('[FFmpeg] ❌ Failed to write tags.');
+        return false;
+      }
+    } catch (error) {
+      console.error('[FFmpeg] ❌ Error writing metadata:', error);
+      return false;
+    }
+  },
   /**
    * Main entry point - generates waveform with automatic method selection
    */

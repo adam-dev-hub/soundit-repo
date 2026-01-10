@@ -1,4 +1,4 @@
-// app/player.jsx - Collapsible Waveform for Ultra Smooth Scrubbing
+// app/player.jsx - FINAL REFACTOR: Zero flickering
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   View, 
@@ -24,13 +24,10 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
-  withSpring,
   runOnJS,
-  interpolate,
-  Extrapolate,
-  useDerivedValue, // ADDED FOR OPTIMIZATION
-  FadeIn,      // ADD THIS
-  FadeOut,  
+  useDerivedValue,
+  FadeIn,
+  FadeOut,
   useAnimatedReaction,
 } from 'react-native-reanimated';
 import { 
@@ -46,26 +43,25 @@ import {
   Info,
   Trash2,
   X,
-  Shuffle,     
+  Shuffle,
   ListMusic 
 } from 'lucide-react-native';
 import { useAudio } from '../context/AudioContext';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { storageService } from '../services/storageService';
+import { useProgress } from 'react-native-track-player';
 
 const { width } = Dimensions.get('window');
 
-// Waveform constants
 const WAVEFORM_HEIGHT = 80;
-const COLLAPSED_HEIGHT = 4; // Height when collapsed to a line
+const COLLAPSED_HEIGHT = 4;
 const BAR_WIDTH = 3;
 const BAR_GAP = 0;
 const BAR_FULL_WIDTH = BAR_WIDTH + BAR_GAP;
 const WAVEFORM_PADDING = 20;
 const AVAILABLE_WIDTH = width - (WAVEFORM_PADDING * 2);
 
-// Generate waveform path
 const generateWaveformPath = (waveformData, availableWidth) => {
   const path = Skia.Path.Make();
   const height = WAVEFORM_HEIGHT;
@@ -93,14 +89,13 @@ const generateWaveformPath = (waveformData, availableWidth) => {
   return { path, totalWidth: numBars * scaledFullWidth };
 };
 
-// OPTIMIZATION: Changed from passing progress.value to passing the SharedValue itself
+// 🔥 WAVEFORM: Isolated from parent re-renders
 const WaveformCanvas = React.memo(({ waveformData, progressSV, collapseSV }) => {
   const { path, totalWidth } = useMemo(
     () => generateWaveformPath(waveformData, AVAILABLE_WIDTH),
     [waveformData]
   );
 
-  // OPTIMIZATION: Use useDerivedValue for UI thread calculations
   const playheadX = useDerivedValue(() => {
     const normalizedProgress = Math.max(0, Math.min(1, progressSV.value));
     return normalizedProgress * totalWidth;
@@ -120,40 +115,37 @@ const WaveformCanvas = React.memo(({ waveformData, progressSV, collapseSV }) => 
     return p;
   }, [totalWidth]);
 
-  
+  const waveformOpacity = useDerivedValue(() => {
+    const value = collapseSV.value;
+    if (value < 0.01) return 1;
+    if (value > 0.99) return 0;
+    return 1 - value;
+  });
 
- // FIXED: Add opacity clamping to prevent ghost flashes
-const waveformOpacity = useDerivedValue(() => {
-  return Math.max(0, Math.min(1, 1 - collapseSV.value));
-});
+  const lineOpacity = useDerivedValue(() => {
+    const value = collapseSV.value;
+    if (value < 0.01) return 0;
+    if (value > 0.99) return 1;
+    return value;
+  });
 
-const lineOpacity = useDerivedValue(() => {
-  return Math.max(0, Math.min(1, collapseSV.value));
-});
-
-  // OPTIMIZATION: Calculate scrubbing circle on UI thread
   const scrubCirclePath = useDerivedValue(() => {
     const p = Skia.Path.Make();
     p.addCircle(playheadX.value, WAVEFORM_HEIGHT / 2, 8);
     return p;
   }, []);
 
-  // When collapsed, show simple lines instead of waveform
   return (
     <Canvas style={{ width: totalWidth, height: WAVEFORM_HEIGHT }}>
-      {/* WAVEFORM LAYER */}
       <Group opacity={waveformOpacity}>
-        {/* Unplayed portion */}
         <Group clip={clipPathUnplayed}>
           <Path path={path} color="rgba(255,255,255,0.3)" style="fill" />
         </Group>
         
-        {/* Played portion */}
         <Group clip={clipPathPlayed}>
           <Path path={path} color="#FF5500" style="fill" />
         </Group>
         
-        {/* Progress indicator line */}
         <Line
           p1={useDerivedValue(() => ({ x: playheadX.value, y: 0 }))}
           p2={useDerivedValue(() => ({ x: playheadX.value, y: WAVEFORM_HEIGHT }))}
@@ -163,9 +155,7 @@ const lineOpacity = useDerivedValue(() => {
         />
       </Group>
 
-      {/* COLLAPSED LINE LAYER */}
       <Group opacity={lineOpacity}>
-        {/* Background line (unplayed) */}
         <Line
           p1={{ x: 0, y: WAVEFORM_HEIGHT / 2 }}
           p2={{ x: totalWidth, y: WAVEFORM_HEIGHT / 2 }}
@@ -174,7 +164,6 @@ const lineOpacity = useDerivedValue(() => {
           strokeWidth={COLLAPSED_HEIGHT}
         />
         
-        {/* Progress line (played) */}
         <Line
           p1={{ x: 0, y: WAVEFORM_HEIGHT / 2 }}
           p2={useDerivedValue(() => ({ x: playheadX.value, y: WAVEFORM_HEIGHT / 2 }))}
@@ -183,7 +172,6 @@ const lineOpacity = useDerivedValue(() => {
           strokeWidth={COLLAPSED_HEIGHT}
         />
         
-        {/* Indicator - larger circle when dragging */}
         <Path
           path={scrubCirclePath}
           color="#FFFFFF"
@@ -194,78 +182,209 @@ const lineOpacity = useDerivedValue(() => {
   );
 });
 
-WaveformCanvas.displayName = 'WaveformCanvas';
+// 🔥 TIME DISPLAY: Isolated component that uses useProgress
+const TimeDisplay = React.memo(({ scrubbingTime }) => {
+  const { position, duration } = useProgress(250);
+
+  const formatTime = (ms) => {
+    if (!ms || isNaN(ms)) return '0:00';
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const displayPosition = scrubbingTime !== null ? scrubbingTime : position * 1000;
+
+  return (
+    <View style={styles.timeRow}>
+      <Text style={styles.timeText}>{formatTime(displayPosition)}</Text>
+      <Text style={styles.timeText}>{formatTime(duration * 1000)}</Text>
+    </View>
+  );
+});
+
+const PlayerBackground = React.memo(({ artwork }) => {
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [artwork]);
+
+  return (
+    <View style={styles.backgroundLayer}>
+      {artwork && !imageError ? (
+        <Image
+          source={{ uri: artwork }}
+          style={styles.backgroundImage}
+          blurRadius={50}
+          onError={() => setImageError(true)}
+        />
+      ) : (
+        <View style={[styles.backgroundImage, { backgroundColor: '#111' }]} />
+      )}
+      <LinearGradient
+        colors={['rgba(0,0,0,0.3)', 'rgba(0,0,0,0.7)', '#000000']}
+        style={StyleSheet.absoluteFill}
+      />
+    </View>
+  );
+}, (prevProps, nextProps) => prevProps.artwork === nextProps.artwork);
+
+const SongArtwork = React.memo(({ artwork, title }) => {
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => { setImageError(false); }, [artwork]);
+
+  return (
+    <View style={styles.artworkSection}>
+      <View style={styles.artworkWrapper}>
+        {artwork && !imageError ? (
+          <Image 
+            source={{ uri: artwork }} 
+            style={styles.artwork}
+            onError={() => setImageError(true)}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.artwork, styles.placeholderArtwork]}>
+            <Text style={styles.placeholderText}>
+              {title?.charAt(0).toUpperCase() || '?'}
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}, (prev, next) => prev.artwork === next.artwork && prev.title === next.title);
+
+const PlayerControls = React.memo(({ 
+  isPlaying, 
+  repeatMode, 
+  isShuffled, 
+  onTogglePlay, 
+  onNext, 
+  onPrev, 
+  onToggleRepeat, 
+  onToggleShuffle 
+}) => {
+  
+  const getRepeatIcon = () => {
+    if (repeatMode === 'one') return <Repeat1 size={24} color="#FF5500" strokeWidth={2} />;
+    return <Repeat size={24} color={repeatMode === 'all' ? '#FF5500' : '#888'} strokeWidth={2} />;
+  };
+
+  const getSequenceIcon = () => {
+    if (isShuffled) return <Shuffle size={24} color="#FF5500" strokeWidth={2} />;
+    return <ListMusic size={24} color="#fff" strokeWidth={2} />;
+  };
+
+  return (
+    <View style={styles.controlsGroup}>
+      <View style={styles.mainControls}>
+        <TouchableOpacity 
+          onPress={onPrev} 
+          style={styles.skipButton}
+          activeOpacity={0.7}
+        >
+          <SkipBack size={36} color="#fff" fill="#fff" />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          onPress={onTogglePlay}
+          style={styles.playButton}
+          activeOpacity={0.8}
+        >
+          {isPlaying ? (
+            <Pause size={32} color="#fff" fill="#fff" />
+          ) : (
+            <Play size={32} color="#fff" fill="#fff" />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          onPress={onNext} 
+          style={styles.skipButton}
+          activeOpacity={0.7}
+        >
+          <SkipForward size={36} color="#fff" fill="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.bottomBar}>
+        <TouchableOpacity 
+          onPress={onToggleRepeat} 
+          style={styles.repeatButton}
+          activeOpacity={0.7}
+        >
+          {getRepeatIcon()}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={onToggleShuffle}
+          style={styles.sequenceButton}
+          activeOpacity={0.7}
+        >
+          {getSequenceIcon()}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
 
 export default function PlayerScreen() {
   const {
     currentSong,
     isPlaying,
-    position,
-    duration,
     repeatMode,
     togglePlayPause,
     playNext,
     playPrevious,
     seekTo,
     toggleRepeat,
-    isShuffled,          
+    isShuffled,
     toggleShuffle,
+    removeSongFromQueue,
   } = useAudio();
+
+  // 🎯 LOCAL useProgress for waveform scrubbing
+  const { position: positionSeconds, duration: durationSeconds } = useProgress(50);
+  const position = positionSeconds * 1000;
+  const duration = durationSeconds * 1000;
 
   const router = useRouter();
   const [imageError, setImageError] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
-const [scrubbingTime, setScrubbingTime] = useState(null);
+  const [scrubbingTime, setScrubbingTime] = useState(null);
 
-
-  // Shared values for animations
   const progress = useSharedValue(0);
   const isDragging = useSharedValue(false);
   const dragStartProgress = useSharedValue(0);
-  const collapseProgress = useSharedValue(0); // 0 = expanded, 1 = collapsed
-  const scrubbingProgress = useSharedValue(-1); 
-  useEffect(() => {
-  if (currentSong?.id) {
-    // Reset UI for the new song
-    progress.value = 0; 
-    setImageError(false);
-    setIsLiked(currentSong.isLiked || false);
-  }
-}, [currentSong?.id]);
+  const collapseProgress = useSharedValue(0);
+  const scrubbingProgress = useSharedValue(-1);
 
   useEffect(() => {
-  if (scrubbingProgress.value >= 0 && scrubbingProgress.value <= 1) {
-    setScrubbingTime(scrubbingProgress.value * duration);
-  } else {
-    setScrubbingTime(null);
-  }
-}, [scrubbingProgress.value, duration]);
-
- const getSequenceIcon = () => {
-    if (isShuffled) {
-      return <Shuffle size={24} color="#FF5500" strokeWidth={2} />;
+    if (currentSong?.id) {
+      progress.value = 0;
+      setImageError(false);
+      setIsLiked(currentSong.isLiked || false);
     }
-    return <ListMusic size={24} color="#fff" strokeWidth={2} />;
-  };
+  }, [currentSong?.id]);
 
+  useAnimatedReaction(
+    () => scrubbingProgress.value,
+    (currentValue) => {
+      if (currentValue >= 0 && currentValue <= 1) {
+        const timeMs = currentValue * duration;
+        runOnJS(setScrubbingTime)(timeMs);
+      } else if (currentValue === -1) {
+        runOnJS(setScrubbingTime)(null);
+      }
+    },
+    [duration]
+  );
 
- 
-// Real-time scrubbing time display
-useAnimatedReaction(
-  () => scrubbingProgress.value,
-  (currentValue, previousValue) => {
-    if (currentValue >= 0 && currentValue <= 1) {
-      const timeMs = currentValue * duration;
-      runOnJS(setScrubbingTime)(timeMs);
-    } else if (currentValue === -1) {
-      runOnJS(setScrubbingTime)(null);
-    }
-  },
-  [duration]
-);
-
-  // Generate waveform data
   const waveformData = useMemo(() => {
     if (currentSong?.waveform && Array.isArray(currentSong.waveform) && currentSong.waveform.length > 0) {
       return currentSong.waveform;
@@ -280,107 +399,103 @@ useAnimatedReaction(
     });
   }, [currentSong?.id, currentSong?.waveform]);
 
+  
+
   const waveformWidth = useMemo(() => {
     const numBars = waveformData.length;
     const totalWidth = numBars * BAR_FULL_WIDTH;
     return Math.min(totalWidth, AVAILABLE_WIDTH);
   }, [waveformData.length]);
 
-  // Smooth progress updates
   useEffect(() => {
-    if (!duration || isDragging.value) return;
-    
-    const newProgress = duration > 0 ? position / duration : 0;
-    
-    if (newProgress >= 0.99) {
-      progress.value = 1;
-    } else if (newProgress < 0.01 && position < 100) {
-      progress.value = 0;
-    } else {
-      progress.value = withTiming(newProgress, { duration: 50 });
-    }
-  }, [position, duration]);
+  if (!duration || isDragging.value) return;
+  
+  const newProgress = duration > 0 ? position / duration : 0;
+  const clampedProgress = Math.max(0, Math.min(1, newProgress));  // ADD THIS LINE
+  
+  if (clampedProgress < 0.01 && position < 100) {
+    progress.value = 0;
+  } else {
+    progress.value = withTiming(clampedProgress, { duration: 50 });  // USE clampedProgress
+  }
+  // REMOVE the "if (newProgress >= 0.99)" condition entirely
+}, [position, duration]);
 
-  // Handle seek
   const handleSeek = useCallback((progressValue) => {
     const clampedProgress = Math.max(0, Math.min(1, progressValue));
     const newPosition = clampedProgress * duration;
     seekTo(newPosition);
   }, [duration, seekTo]);
 
-  // Pan Gesture with collapse animation
-const panGesture = useMemo(() =>
-  Gesture.Pan()
-.onBegin(() => {
-  'worklet';
-  isDragging.value = true;
-  dragStartProgress.value = progress.value;
-  scrubbingProgress.value = progress.value; // Show immediately
-  collapseProgress.value = withTiming(1, { duration: 50 });
-})
-   .onUpdate((event) => {
-  'worklet';
-  const delta = event.translationX / waveformWidth;
-  const newProgress = dragStartProgress.value + delta;
-  const clampedProgress = Math.max(0, Math.min(1, newProgress));
-  progress.value = clampedProgress;
-  scrubbingProgress.value = clampedProgress; // Update scrubbing display
-})
-   .onEnd(() => {
-  'worklet';
-  const finalProgress = progress.value;
-  scrubbingProgress.value = -1; // Hide scrubbing time
-  runOnJS(handleSeek)(finalProgress);
-  
-  collapseProgress.value = withTiming(0, { duration: 150 });
-  
-  setTimeout(() => {
-    'worklet';
-    isDragging.value = false;
-  }, 100);
-})
-    .minDistance(1),
-  [waveformWidth, handleSeek]
-);
-
-
-  // Tap Gesture with quick collapse/expand
-  const tapGesture = useMemo(() =>
-    Gesture.Tap()
-      .maxDuration(250)
-  .onStart(() => {
-  'worklet';
-  collapseProgress.value = withTiming(1, { duration: 100 });
-})
-.onEnd((event) => {
-  'worklet';
-  const newProgress = event.x / waveformWidth;
-  progress.value = newProgress;
-  scrubbingProgress.value = newProgress; // Show briefly
-  runOnJS(handleSeek)(newProgress);
-  collapseProgress.value = withTiming(0, { duration: 150 });
-  
-  // Hide after a short delay for tap
-  setTimeout(() => {
-    'worklet';
-    scrubbingProgress.value = -1;
-  }, 500); // Show for 500ms on tap
-}),
+  const panGesture = useMemo(() =>
+    Gesture.Pan()
+      .onBegin(() => {
+        'worklet';
+        isDragging.value = true;
+        dragStartProgress.value = progress.value;
+        scrubbingProgress.value = progress.value;
+        collapseProgress.value = withTiming(1, { duration: 50 });
+      })
+      .onUpdate((event) => {
+        'worklet';
+        const delta = event.translationX / waveformWidth;
+        const newProgress = dragStartProgress.value + delta;
+        const clampedProgress = Math.max(0, Math.min(1, newProgress));
+        progress.value = clampedProgress;
+        scrubbingProgress.value = clampedProgress;
+      })
+      .onEnd(() => {
+        'worklet';
+        const finalProgress = progress.value;
+        scrubbingProgress.value = -1;
+        runOnJS(handleSeek)(finalProgress);
+        
+        collapseProgress.value = withTiming(0, { duration: 150 });
+        
+        setTimeout(() => {
+          'worklet';
+          isDragging.value = false;
+        }, 100);
+      })
+      .minDistance(1),
     [waveformWidth, handleSeek]
   );
+
+  const tapGesture = useMemo(() =>
+  Gesture.Tap()
+    .maxDuration(250)
+    .onStart(() => {
+      'worklet';
+      isDragging.value = true;
+      collapseProgress.value = withTiming(1, { duration: 100 });
+    })
+    .onEnd((event) => {
+      'worklet';
+      const newProgress = event.x / waveformWidth;
+      progress.value = withTiming(newProgress, { duration: 150 });  // ANIMATE instead of direct assignment
+      scrubbingProgress.value = newProgress;
+      runOnJS(handleSeek)(newProgress);
+      collapseProgress.value = withTiming(0, { duration: 150 });
+      
+      setTimeout(() => {
+        'worklet';
+        scrubbingProgress.value = -1;
+        isDragging.value = false;
+      }, 300);  // INCREASE to 300ms to let seek complete
+    }),
+  [waveformWidth, handleSeek]
+);
 
   const composedGesture = useMemo(() => 
     Gesture.Race(panGesture, tapGesture),
     [panGesture, tapGesture]
   );
 
-  // Animated container style
   const waveformContainerStyle = useAnimatedStyle(() => ({
     height: WAVEFORM_HEIGHT,
     opacity: 1,
   }));
 
-  // Like toggle
   const handleLikeToggle = useCallback(async () => {
     if (!currentSong) return;
     try {
@@ -398,20 +513,23 @@ const panGesture = useMemo(() =>
     }
   }, [currentSong, isLiked]);
 
-  // Delete song
   const handleDelete = useCallback(async () => {
-    if (!currentSong) return;
+  if (!currentSong) return;
+  
+  try {
+    // Remove from queue and stop playback
+    await removeSongFromQueue(currentSong.id);
     
-    try {
-      await storageService.deleteSong(currentSong.id);
-      setShowOptionsModal(false);
-      router.back();
-    } catch (error) {
-      console.error('Failed to delete song:', error);
-    }
-  }, [currentSong, router]);
+    // Delete from storage
+    await storageService.deleteSong(currentSong.id);
+    
+    setShowOptionsModal(false);
+    router.back();
+  } catch (error) {
+    console.error('Failed to delete song:', error);
+  }
+}, [currentSong, router, removeSongFromQueue]);
 
-  // Format time
   const formatTime = useCallback((ms) => {
     if (!ms || isNaN(ms)) return '0:00';
     const totalSeconds = Math.floor(ms / 1000);
@@ -419,9 +537,7 @@ const panGesture = useMemo(() =>
     const seconds = totalSeconds % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, []);
- 
 
-  // Get repeat icon
   const getRepeatIcon = () => {
     if (repeatMode === 'one') {
       return <Repeat1 size={24} color="#FF5500" strokeWidth={2} />;
@@ -441,7 +557,7 @@ const panGesture = useMemo(() =>
     );
   }
 
-  const displayTitle = currentSong.name?.replace(/\.[^/.]+$/, '') || 'Unknown Title';
+  const displayTitle = currentSong.title || currentSong.name?.replace(/\.[^/.]+$/, '') || 'Unknown Title';
   const displayArtist = currentSong.artist || 'Unknown Artist';
 
   return (
@@ -449,25 +565,9 @@ const panGesture = useMemo(() =>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" />
         
-        {/* Background with blur */}
-        <View style={styles.backgroundLayer}>
-          {currentSong.artwork && !imageError ? (
-            <Image
-              source={{ uri: currentSong.artwork }}
-              style={styles.backgroundImage}
-              blurRadius={50}
-            />
-          ) : (
-            <View style={[styles.backgroundImage, { backgroundColor: '#111' }]} />
-          )}
-          <LinearGradient
-            colors={['rgba(0,0,0,0.3)', 'rgba(0,0,0,0.7)', '#000000']}
-            style={StyleSheet.absoluteFill}
-          />
-        </View>
+        <PlayerBackground artwork={currentSong.artwork} />
 
         <SafeAreaView style={styles.safeArea}>
-          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity 
               onPress={() => router.back()} 
@@ -496,7 +596,6 @@ const panGesture = useMemo(() =>
           </View>
 
           <View style={styles.content}>
-            {/* Artwork Section */}
             <View style={styles.artworkSection}>
               <View style={styles.artworkWrapper}>
                 {currentSong.artwork && !imageError ? (
@@ -516,9 +615,7 @@ const panGesture = useMemo(() =>
               </View>
             </View>
 
-            {/* Bottom Section */}
             <View style={styles.bottomSection}>
-              {/* Track Metadata */}
               <View style={styles.trackMeta}>
                 <View style={styles.trackTexts}>
                   <Text style={styles.songTitle} numberOfLines={1}>
@@ -543,7 +640,6 @@ const panGesture = useMemo(() =>
                 </TouchableOpacity>
               </View>
 
-              {/* Waveform Section - OPTIMIZATION: Pass SharedValues instead of .value */}
               <View style={styles.waveformSection}>
                 <GestureDetector gesture={composedGesture}>
                   <Animated.View style={[styles.waveformContainer, waveformContainerStyle]}>
@@ -554,88 +650,39 @@ const panGesture = useMemo(() =>
                     />
                   </Animated.View>
                 </GestureDetector>
-                {/* Scrubbing Time Indicator */}
-{scrubbingTime !== null && (
-  <Animated.View 
-    style={styles.scrubbingTimeContainer}
-    entering={FadeIn.duration(100)}
-    exiting={FadeOut.duration(100)}
-  >
-    <View style={styles.scrubbingTimeBubble}>
-      <Text style={styles.scrubbingTimeText}>
-        {formatTime(scrubbingTime)}
-      </Text>
-    </View>
-  </Animated.View>
-)}
 
-                {/* Time indicators */}
-                <View style={styles.timeRow}>
-                  <Text style={styles.timeText}>{formatTime(position)}</Text>
-                  <Text style={styles.timeText}>{formatTime(duration)}</Text>
-                </View>
+                {scrubbingTime !== null && (
+                  <Animated.View 
+                    style={styles.scrubbingTimeContainer}
+                    entering={FadeIn.duration(100)}
+                    exiting={FadeOut.duration(100)}
+                  >
+                    <View style={styles.scrubbingTimeBubble}>
+                      <Text style={styles.scrubbingTimeText}>
+                        {formatTime(scrubbingTime)}
+                      </Text>
+                    </View>
+                  </Animated.View>
+                )}
+
+                {/* 🎯 Isolated Time Display */}
+                <TimeDisplay scrubbingTime={scrubbingTime} />
               </View>
 
-              {/* Main Controls */}
-              <View style={styles.controlsGroup}>
-                <View style={styles.mainControls}>
-                  <TouchableOpacity 
-                    onPress={playPrevious} 
-                    style={styles.skipButton}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <SkipBack size={36} color="#fff" fill="#fff" />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    onPress={togglePlayPause}
-                    style={styles.playButton}
-                    activeOpacity={0.8}
-                  >
-                    {isPlaying ? (
-                      <Pause size={32} color="#fff" fill="#fff" />
-                    ) : (
-                      <Play size={32} color="#fff" fill="#fff" />
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    onPress={playNext} 
-                    style={styles.skipButton}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <SkipForward size={36} color="#fff" fill="#fff" />
-                  </TouchableOpacity>
-                </View>
-
-                {/* Bottom Bar */}
-                                <View style={styles.bottomBar}>
-                  <TouchableOpacity 
-                    onPress={toggleRepeat} 
-                    style={styles.repeatButton}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    {getRepeatIcon()}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={toggleShuffle}
-                    style={styles.sequenceButton}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    {getSequenceIcon()}
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <PlayerControls 
+                isPlaying={isPlaying}
+                repeatMode={repeatMode}
+                isShuffled={isShuffled}
+                onTogglePlay={togglePlayPause}
+                onNext={playNext}
+                onPrev={playPrevious}
+                onToggleRepeat={toggleRepeat}
+                onToggleShuffle={toggleShuffle}
+              />
             </View>
           </View>
         </SafeAreaView>
 
-        {/* Options Modal */}
         <Modal
           visible={showOptionsModal}
           transparent
@@ -737,31 +784,12 @@ const panGesture = useMemo(() =>
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  backgroundLayer: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  backgroundImage: {
-    width: '100%',
-    height: '100%',
-    opacity: 0.4,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: '#888',
-    fontSize: 18,
-    fontWeight: '600',
-  },
+  container: { flex: 1, backgroundColor: '#000' },
+  backgroundLayer: { ...StyleSheet.absoluteFillObject },
+  backgroundImage: { width: '100%', height: '100%', opacity: 0.4 },
+  safeArea: { flex: 1 },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyText: { color: '#888', fontSize: 18, fontWeight: '600' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -770,29 +798,11 @@ const styles = StyleSheet.create({
     height: 60,
     marginTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  headerTextContainer: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  headerTitle: {
-    color: '#999',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-  },
-  headerSubtitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  headerButton: {
-    padding: 8,
-  },
-  content: {
-    flex: 1,
-    flexDirection: 'column',
-  },
+  headerTextContainer: { alignItems: 'center', flex: 1 },
+  headerTitle: { color: '#999', fontSize: 11, fontWeight: '700', letterSpacing: 1.2 },
+  headerSubtitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginTop: 2 },
+  headerButton: { padding: 8 },
+  content: { flex: 1, flexDirection: 'column' },
   artworkSection: {
     height: width * 0.85,
     justifyContent: 'center',
@@ -822,14 +832,8 @@ const styles = StyleSheet.create({
     borderColor: '#333',
     borderWidth: 1,
   },
-  placeholderText: {
-    fontSize: 100,
-    color: '#444',
-    fontWeight: '700',
-  },
-  bottomSection: {
-    paddingBottom: 30,
-  },
+  placeholderText: { fontSize: 100, color: '#444', fontWeight: '700' },
+  bottomSection: { paddingBottom: 30 },
   trackMeta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -837,24 +841,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     marginBottom: 24,
   },
-  trackTexts: {
-    flex: 1,
-    marginRight: 12,
-  },
-  songTitle: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  artistName: {
-    color: '#bbb',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  likeButton: {
-    padding: 8,
-  },
+  trackTexts: { flex: 1, marginRight: 12 },
+  songTitle: { color: '#fff', fontSize: 22, fontWeight: '700', marginBottom: 6 },
+  artistName: { color: '#bbb', fontSize: 16, fontWeight: '500' },
+  likeButton: { padding: 8 },
   waveformSection: {
     paddingHorizontal: WAVEFORM_PADDING,
     marginBottom: 20,
@@ -881,19 +871,20 @@ const styles = StyleSheet.create({
   },
   controlsGroup: {
     paddingHorizontal: 24,
-    height: 180,
+    minHeight: 180,
+    justifyContent: 'center',
+    position: 'relative',
+    marginBottom: 20,
   },
   mainControls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 32,
-    gap: 20,
+    gap: 30,
     height: 96,
+    marginBottom: 80,
   },
-  skipButton: {
-    padding: 12,
-  },
+  skipButton: { padding: 12 },
   playButton: {
     width: 72,
     height: 72,
@@ -908,17 +899,42 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   bottomBar: {
-  flexDirection: 'row',          // ensure side-by-side
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 16,                       // space between buttons
-  paddingTop: 12,
-  paddingBottom: 12,
-  borderTopWidth: StyleSheet.hairlineWidth,
-  borderTopColor: 'rgba(255,255,255,0.1)',
-},
-  repeatButton: {
-    padding: 12,
+    position: 'absolute',
+    bottom: 0,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    zIndex: 10,
+    marginBottom: 30,
+  },
+  repeatButton: { padding: 12 },
+  sequenceButton: { padding: 12 },
+  scrubbingTimeContainer: {
+    position: 'absolute',
+    top: -40,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  scrubbingTimeBubble: {
+    backgroundColor: '#FF5500',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  scrubbingTimeText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   modalOverlay: {
     flex: 1,
@@ -931,6 +947,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     maxHeight: '50%',
     minHeight: 200,
+    paddingBottom: Platform.OS === 'android' ? 10 : 20,
+  
   },
   optionsHeader: {
     flexDirection: 'row',
@@ -961,25 +979,16 @@ const styles = StyleSheet.create({
     color: '#666',
     fontWeight: '700',
   },
-  optionsTextContainer: {
-    flex: 1,
-  },
+  optionsTextContainer: { flex: 1 },
   optionsTitle: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
   },
-  optionsArtist: {
-    color: '#999',
-    fontSize: 14,
-  },
-  optionsCloseButton: {
-    padding: 8,
-  },
-  optionsList: {
-    paddingVertical: 8,
-  },
+  optionsArtist: { color: '#999', fontSize: 14 },
+  optionsCloseButton: { padding: 8 },
+  optionsList: { paddingVertical: 8 },
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -987,44 +996,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 16,
   },
-  optionItemDanger: {
-    // No special background needed
-  },
+  optionItemDanger: {},
   optionText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
   },
-  scrubbingTimeContainer: {
-  position: 'absolute',
-  top: -40,
-  left: 0,
-  right: 0,
-  alignItems: 'center',
-  zIndex: 10,
-},
-scrubbingTimeBubble: {
-  backgroundColor: '#FF5500',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 8,
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.3,
-  shadowRadius: 4,
-  elevation: 5,
-},
-scrubbingTimeText: {
-  color: '#fff',
-  fontSize: 14,
-  fontWeight: '700',
-  fontVariant: ['tabular-nums'],
-},
-
-  optionTextDanger: {
-    color: '#FF4444',
-  },
-   sequenceButton: {
-    padding: 12,
-  }
+  optionTextDanger: { color: '#FF4444' },
 });

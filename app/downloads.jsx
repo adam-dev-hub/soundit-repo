@@ -44,7 +44,7 @@ export default function DownloadsScreen() {
   const [editArtist, setEditArtist] = useState('');
   const [editAlbum, setEditAlbum] = useState('');
 
-  const { currentSong, playSong, setPlayQueue } = useAudio();
+  const { currentSong, playSong, removeSongFromQueue, updateSongInQueue, closePlayer } = useAudio();
 
   useFocusEffect(
     useCallback(() => {
@@ -71,7 +71,6 @@ export default function DownloadsScreen() {
   };
 
   const handlePlaySong = async (song, index) => {
-    setPlayQueue(songs, index);
     await playSong(song, songs);
   };
 
@@ -91,6 +90,7 @@ export default function DownloadsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
+              await closePlayer();
               // Delete sequentially to avoid database conflicts
               for (const song of songs) {
                 await storageService.deleteSong(song.id);
@@ -124,30 +124,6 @@ export default function DownloadsScreen() {
     setShowEditModal(true);
   };
 
-  const handleSaveMetadata = async () => {
-    if (!selectedSong) return;
-
-    try {
-      const updates = {
-        name: editTitle.trim() || selectedSong.name,
-        artist: editArtist.trim() || 'Unknown Artist',
-        album: editAlbum.trim() || ''
-      };
-
-      await storageService.updateSongMetadata(selectedSong.id, updates);
-      
-      const updatedSongs = songs.map(s => 
-        s.id === selectedSong.id ? { ...s, ...updates } : s
-      );
-      setSongs(updatedSongs);
-
-      setShowEditModal(false);
-      Alert.alert('Success', 'Song info updated');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to update song info');
-    }
-  };
-
   const handleDelete = () => {
     if (!selectedSong) return;
     
@@ -161,7 +137,13 @@ export default function DownloadsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // Remove from audio context first
+              await removeSongFromQueue(selectedSong.id);
+              
+              // Then delete from storage
               await storageService.deleteSong(selectedSong.id);
+              
+              // Update local state
               setSongs(prev => prev.filter(s => s.id !== selectedSong.id));
               setShowOptionsModal(false);
             } catch (error) {
@@ -172,6 +154,36 @@ export default function DownloadsScreen() {
       ]
     );
   };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedSong) return;
+
+    try {
+      const updates = {
+        name: editTitle.trim() || selectedSong.name,
+        artist: editArtist.trim() || 'Unknown Artist',
+        album: editAlbum.trim() || ''
+      };
+
+      // Update in audio context
+      updateSongInQueue(selectedSong.id, updates);
+
+      // Update in storage
+      await storageService.updateSongMetadata(selectedSong.id, updates);
+      
+      // Update local state
+      const updatedSongs = songs.map(s => 
+        s.id === selectedSong.id ? { ...s, ...updates } : s
+      );
+      setSongs(updatedSongs);
+
+      setShowEditModal(false);
+      Alert.alert('Success', 'Song info updated');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update song info');
+    }
+  };
+
 
   // --- RENDER HELPERS ---
 
@@ -231,7 +243,10 @@ export default function DownloadsScreen() {
               colors={['#FF5500']}
             />
           }
-          contentContainerStyle={{ paddingBottom: 100 }}
+         contentContainerStyle={{ 
+            paddingBottom: currentSong ? 95 : 0 
+          }}
+          showsVerticalScrollIndicator={false}
         />
       )}
 

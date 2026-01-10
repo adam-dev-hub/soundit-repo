@@ -1,4 +1,4 @@
-// app/drive.jsx - Fixed authentication flow
+
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -22,13 +22,15 @@ import {
   ChevronRight,
   FolderDown,
   Search,
-  X
+  X,
+  WifiOff
 } from 'lucide-react-native';
 import { authService } from '../services/authService';
 import { driveService } from '../services/driveService';
 import { storageService } from '../services/storageService';
 import MiniPlayer from '../components/MiniPlayer';
 import { audioAnalyzer } from '../services/audioAnalyzerFFmpeg';
+import NetInfo from '@react-native-community/netinfo';
 
 export default function DriveScreen() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -43,7 +45,21 @@ export default function DriveScreen() {
   const [folderNames, setFolderNames] = useState({ root: 'My Drive' });
   const [userInfo, setUserInfo] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isOnline, setIsOnline] = useState(true);
 
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected ?? false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Check auth on mount
+  useEffect(() => {
+    if (isOnline) {
+      checkAuth();
+    }
+  }, [isOnline]); // Re-check auth when coming back online
   // Check auth on mount
   useEffect(() => {
     checkAuth();
@@ -451,6 +467,25 @@ export default function DriveScreen() {
   const filteredFiles = files.filter(file => 
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  if (!isOnline) {
+    return (
+      <View style={styles.container}>
+         <View style={styles.headertop}>
+            <View>
+            <Text style={styles.title}>My Drive</Text>
+            </View>
+        </View>
+        <View style={styles.centerContainer}>
+          <WifiOff size={64} color="#333" />
+          <Text style={styles.emptyText}>You are offline</Text>
+          <Text style={styles.emptySubtext}>
+            Connect to the internet to access your Google Drive music.
+          </Text>
+        </View>
+        <MiniPlayer />
+      </View>
+    );
+  }
 
   // Loading screen (initial check)
   if (loading && !isAuthenticated && !userInfo) {

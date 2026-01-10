@@ -5,8 +5,18 @@ import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { authService } from '../services/authService';
 import { Home, Music, Download, Cloud } from 'lucide-react-native';
+import {
+  configureReanimatedLogger,
+  ReanimatedLogLevel,
+} from 'react-native-reanimated';
+import TrackPlayer from 'react-native-track-player';
 
 export default function RootLayout() {
+  configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false, // Reanimated runs in strict mode by default
+});
+TrackPlayer.registerPlaybackService(() => require('../services/playerService'));
   useEffect(() => {
     authService.configure();
   }, []);
@@ -70,6 +80,7 @@ export default function RootLayout() {
             title: 'Now Playing',
             presentation: 'modal',
             headerShown: false,
+            tabBarStyle: { display: 'none' },
           }}
         />
         <Tabs.Screen

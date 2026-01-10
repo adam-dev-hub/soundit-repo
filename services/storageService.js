@@ -1,12 +1,26 @@
 // services/storageService.js
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
+import { aiMetadataService } from './aiMetadataService';
 
 const FAVORIS_PLAYLIST_ID = 'favoris_playlist_fixed_id';
 const FAVORIS_PLAYLIST_NAME = 'Favoris';
 const FAVORIS_PLAYLIST_COVER_DEFAULT = 'FAVORIS_DEFAULT_LOCAL_ASSET'; 
+const changeListeners = [];
 
 export const storageService = {
+  //listner management
+  addChangeListener(callback) {
+    changeListeners.push(callback);
+    return () => {
+      const index = changeListeners.indexOf(callback);
+      if (index > -1) changeListeners.splice(index, 1);
+    };
+  },
+
+  notifyChange(type, data) {
+    changeListeners.forEach(callback => callback(type, data));
+  },
   // Songs
   async saveDownloadedSong(song) {
     try {
@@ -26,6 +40,7 @@ export const storageService = {
       } else {
         // Add new song
         songs.push(song);
+        this.notifyChange('songAdded', { song });
       }
       
       await AsyncStorage.setItem('downloaded_songs', JSON.stringify(songs));
@@ -62,6 +77,7 @@ export const storageService = {
       
       // Also remove from all playlists
       await this.removeSongFromAllPlaylists(songId);
+      this.notifyChange('songDeleted', { songId });
       
       return updated;
     } catch (error) {
@@ -80,6 +96,7 @@ export const storageService = {
       
       // Update song in all playlists too
       await this.updateSongInPlaylists(songId, metadata);
+      this.notifyChange('songUpdated', { songId, metadata });
       
       return updated;
     } catch (error) {
@@ -284,6 +301,38 @@ export const storageService = {
       throw error;
     }
   },
+  async getStorageUsage() {
+    try {
+      const songs = await this.getDownloadedSongs();
+      let totalBytes = 0;
+
+      // We use Promise.all to check file sizes in parallel for speed
+      await Promise.all(
+        songs.map(async (song) => {
+          if (song.localUri) {
+            try {
+              const fileInfo = await FileSystemLegacy.getInfoAsync(song.localUri);
+              if (fileInfo.exists && fileInfo.size) {
+                totalBytes += fileInfo.size;
+              }
+            } catch (e) {
+              console.warn('Error checking file size:', e);
+            }
+          }
+        })
+      );
+
+      // Convert to MB or GB
+      const mb = totalBytes / (1024 * 1024);
+      if (mb > 1024) {
+        return `${(mb / 1024).toFixed(2)} GB`;
+      }
+      return `${mb.toFixed(1)} MB`;
+    } catch (error) {
+      console.error('Error calculating storage:', error);
+      return '0 MB';
+    }
+  },
 
   async deletePlaylist(playlistId) {
     try {
@@ -376,3 +425,4 @@ export const storageService = {
     }
   }
 };
+

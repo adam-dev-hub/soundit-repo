@@ -1,5 +1,5 @@
 // app/mymusic.jsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -63,16 +63,30 @@ export default function MyMusicScreen() {
   const [selectedSongsToAdd, setSelectedSongsToAdd] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   
-  const { currentSong, playSong, setPlayQueue, isShuffled, toggleShuffle } = useAudio();
+  const { currentSong, playSong, isShuffled, toggleShuffle } = useAudio();
 
   useFocusEffect(
     useCallback(() => {
       loadData();
       return () => {
         resetModals();
+        setSelectedPlaylist(null); // Reset the opened playlist view
+        setSearchQuery('');
       };
     }, [])
   );
+
+  // In mymusic.jsx, add useEffect
+
+useEffect(() => {
+  const unsubscribe = storageService.addChangeListener((type, data) => {
+    if (type === 'songDeleted' || type === 'songUpdated' || type === 'songAdded') {
+      loadData(); // Reload all data
+    }
+  });
+
+  return () => unsubscribe();
+}, []);
 
   const resetModals = () => {
     setShowCreateModal(false);
@@ -319,7 +333,6 @@ export default function MyMusicScreen() {
 
   const handlePlaySong = async (song, index) => {
     const currentList = selectedPlaylist ? selectedPlaylist.songs : songs;
-    setPlayQueue(currentList, index);
     await playSong(song, currentList);
   };
 
@@ -334,7 +347,6 @@ export default function MyMusicScreen() {
       ? Math.floor(Math.random() * selectedPlaylist.songs.length)
       : 0;
     
-    setPlayQueue(selectedPlaylist.songs, startIndex);
     await playSong(selectedPlaylist.songs[startIndex], selectedPlaylist.songs);
   };
 

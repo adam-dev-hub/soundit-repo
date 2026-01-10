@@ -42,3 +42,5 @@ yarn-error.*
 
 # secure
 /secure
+/services/authService.js
+/services/aiMetadataService.js

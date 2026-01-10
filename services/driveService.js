@@ -3,6 +3,9 @@ import * as FileSystemLegacy from 'expo-file-system/legacy';
 import { documentDirectory } from 'expo-file-system';
 import { authService } from './authService';
 import { storageService } from './storageService';
+import { aiMetadataService } from './aiMetadataService';
+import { audioAnalyzer } from './audioAnalyzerFFmpeg';
+
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 
@@ -151,7 +154,7 @@ export const driveService = {
       
       console.log(`Downloading to: ${fileUri}`);
       
-      // Use Legacy FileSystem methods
+      // Ensure directory exists
       const dirInfo = await FileSystemLegacy.getInfoAsync(`${docDir}music`);
       if (!dirInfo.exists) {
         await FileSystemLegacy.makeDirectoryAsync(`${docDir}music`, {
@@ -159,13 +162,39 @@ export const driveService = {
         });
       }
 
+      // Helper to save the song to AsyncStorage
+      const saveToStorage = async (uri, metadata) => {
+        const songData = {
+          id: fileId,
+          title: metadata.title || fileName,
+          artist: metadata.artist || 'Unknown Artist',
+          album: metadata.album,
+          artwork: metadata.artwork,
+          duration: metadata.duration,
+          localUri: uri,
+          filename: fileName,
+          downloadedAt: new Date().toISOString(),
+          // storageService.saveDownloadedSong handles preserving existing 'isLiked' status and 'downloadedAt'
+        };
+        
+        console.log(`[DriveService] 💾 Saving enhanced metadata to storage for: ${songData.title}`);
+        await storageService.saveDownloadedSong(songData);
+      };
+
       const fileInfo = await FileSystemLegacy.getInfoAsync(fileUri);
+      
+      // SCENARIO 1: File already exists locally
       if (fileInfo.exists) {
         console.log('File already exists:', fileUri);
         const metadata = await this.getFileMetadata(fileUri, fileName, fileId);
+        
+        // FIX: Save to storage so UI updates with new metadata
+        await saveToStorage(fileUri, metadata);
+        
         return { uri: fileUri, metadata };
       }
 
+      // SCENARIO 2: Fresh Download
       const callback = downloadProgress => {
         const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
         if (onProgress) {
@@ -173,7 +202,6 @@ export const driveService = {
         }
       };
 
-      // Use Legacy createDownloadResumable
       const downloadResumable = FileSystemLegacy.createDownloadResumable(
         `${DRIVE_API}/files/${fileId}?alt=media`,
         fileUri,
@@ -188,8 +216,11 @@ export const driveService = {
       const result = await downloadResumable.downloadAsync();
       console.log('Download complete:', result.uri);
       
-      // Extract metadata after download
+      // Extract and Enhance metadata
       const metadata = await this.getFileMetadata(result.uri, fileName, fileId);
+      
+      // FIX: Save to storage so UI updates with new metadata
+      await saveToStorage(result.uri, metadata);
       
       return { uri: result.uri, metadata };
     } catch (error) {
@@ -199,75 +230,110 @@ export const driveService = {
   },
 
   async getFileMetadata(fileUri, originalFileName, fileId) {
+  try {
+    // Step 1: Parse metadata from filename as fallback
+    const filenameMetadata = this.parseFilenameMetadata(originalFileName);
+    console.log('Filename metadata:', filenameMetadata);
+    
+    // Step 2: Try to extract embedded metadata from the file (ID3 tags)
+    let embeddedMetadata = null;
     try {
-      // Parse metadata from filename as fallback
-      const filenameMetadata = this.parseFilenameMetadata(originalFileName);
-      
-      console.log('Filename metadata:', filenameMetadata);
-      
-      // Try to extract embedded metadata from the file
-      let embeddedMetadata = null;
-      try {
-        embeddedMetadata = await this.extractEmbeddedMetadata(fileUri);
-        console.log('Embedded metadata extracted:', {
-          hasTitle: !!embeddedMetadata?.title,
-          hasArtist: !!embeddedMetadata?.artist,
-          hasAlbum: !!embeddedMetadata?.album,
-          hasArtwork: !!embeddedMetadata?.artwork
-        });
-      } catch (error) {
-        console.log('Could not extract embedded metadata:', error.message);
-      }
-      
-      // Prefer embedded metadata over filename parsing
-      const metadata = {
-        title: embeddedMetadata?.title || filenameMetadata.title || originalFileName?.replace(/\.[^.]+$/, '') || null,
-        artist: embeddedMetadata?.artist || filenameMetadata.artist || null,
-        album: embeddedMetadata?.album || filenameMetadata.album || null,
-        duration: embeddedMetadata?.duration || null,
-        artwork: embeddedMetadata?.artwork || null,
-      };
-      
-      // If no embedded artwork, try online APIs as fallback
-      if (!metadata.artwork && metadata.artist && metadata.title) {
-        try {
-          console.log('No embedded artwork, trying online APIs...');
-          let artwork = await this.fetchArtworkFromiTunes(metadata.artist, metadata.title);
-          
-          if (!artwork) {
-            artwork = await this.fetchArtworkFromDeezer(metadata.artist, metadata.title);
-          }
-          
-          metadata.artwork = artwork;
-        } catch (error) {
-          console.log('Online artwork fetch error:', error.message);
-        }
-      }
-      
-      // Save artwork to file if it's a base64 string
-      if (metadata.artwork && metadata.artwork.startsWith('data:image/')) {
-        console.log('Converting base64 artwork to file...');
-        const artworkPath = await saveBase64Artwork(metadata.artwork, fileId);
-        if (artworkPath) {
-          metadata.artwork = artworkPath;
-          console.log('Artwork saved as file:', artworkPath);
-        }
-      }
-      
-      console.log("FINAL METADATA:", metadata);
-      
-      return metadata;
+      embeddedMetadata = await this.extractEmbeddedMetadata(fileUri);
+      console.log('Embedded metadata extracted:', {
+        hasTitle: !!embeddedMetadata?.title,
+        hasArtist: !!embeddedMetadata?.artist,
+        hasAlbum: !!embeddedMetadata?.album,
+        hasArtwork: !!embeddedMetadata?.artwork
+      });
     } catch (error) {
-      console.log('Error extracting metadata:', error.message);
-      return {
-        title: originalFileName?.replace(/\.[^.]+$/, '') || null,
-        artist: null,
-        album: null,
-        duration: null,
-        artwork: null,
-      };
+      console.log('Could not extract embedded metadata:', error.message);
     }
-  },
+    
+    // Step 3: Prepare base metadata (prefer embedded over filename)
+    const baseMetadata = {
+      title: embeddedMetadata?.title || filenameMetadata.title || originalFileName?.replace(/\.[^.]+$/, ''),
+      artist: embeddedMetadata?.artist || filenameMetadata.artist || 'Unknown Artist',
+      album: embeddedMetadata?.album || filenameMetadata.album || null,
+      duration: embeddedMetadata?.duration || null,
+      artwork: embeddedMetadata?.artwork || null,
+    };
+    
+    // Step 4: Enhance metadata using AI
+    console.log('[AI] Starting AI metadata enhancement...');
+    let enhancedMetadata;
+    try {
+      enhancedMetadata = await aiMetadataService.enhanceMetadata(
+        originalFileName,
+        baseMetadata
+      );
+      
+      // Step 5: Verify and enhance with music APIs (if no artwork exists)
+      if (!enhancedMetadata.artwork && enhancedMetadata.searchQuery) {
+        enhancedMetadata = await aiMetadataService.verifyAndEnhanceWithAPIs(enhancedMetadata);
+      }
+    } catch (error) {
+      console.error('[AI] Enhancement failed, using base metadata:', error);
+      enhancedMetadata = baseMetadata;
+    }
+    
+    // Step 6: Fallback to manual API search if still no artwork
+    if (!enhancedMetadata.artwork && enhancedMetadata.artist && enhancedMetadata.title) {
+      try {
+        console.log('No artwork yet, trying manual API search...');
+        let artwork = await this.fetchArtworkFromiTunes(enhancedMetadata.artist, enhancedMetadata.title);
+        
+        if (!artwork) {
+          artwork = await this.fetchArtworkFromDeezer(enhancedMetadata.artist, enhancedMetadata.title);
+        }
+        
+        if (artwork) {
+          enhancedMetadata.artwork = artwork;
+        }
+      } catch (error) {
+        console.log('Manual artwork fetch error:', error.message);
+      }
+    }
+    
+    // Step 7: Save base64 artwork to file if needed
+    if (enhancedMetadata.artwork && enhancedMetadata.artwork.startsWith('data:image/')) {
+      console.log('Converting base64 artwork to file...');
+      const artworkPath = await saveBase64Artwork(enhancedMetadata.artwork, fileId);
+      if (artworkPath) {
+        enhancedMetadata.artwork = artworkPath;
+        console.log('Artwork saved as file:', artworkPath);
+      }
+    }
+    
+    console.log("FINAL ENHANCED METADATA:", {
+      title: enhancedMetadata.title,
+      artist: enhancedMetadata.artist,
+      album: enhancedMetadata.album,
+      hasArtwork: !!enhancedMetadata.artwork,
+      aiProcessed: enhancedMetadata.metadata?.aiProcessed,
+      confidence: enhancedMetadata.metadata?.confidence
+    });
+    try {
+        if (audioAnalyzer && audioAnalyzer.writeMetadataToFile) {
+             console.log('[DriveService] 💾 Saving tags to file...');
+             await audioAnalyzer.writeMetadataToFile(fileUri, enhancedMetadata);
+        }
+    } catch (err) {
+        console.error('[DriveService] ⚠️ Failed to save tags to file:', err);
+    }
+    
+    return enhancedMetadata;
+  } catch (error) {
+    console.error('Error in getFileMetadata:', error);
+    return {
+      title: originalFileName?.replace(/\.[^.]+$/, '') || null,
+      artist: 'Unknown Artist',
+      album: null,
+      duration: null,
+      artwork: null,
+    };
+  }
+},
+
 
   async fetchArtistImage(artistName) {
     if (!artistName || artistName === 'Unknown Artist') return null;
