@@ -357,8 +357,13 @@ useEffect(() => {
   );
 
   const filteredAvailableSongs = availableSongsRaw.filter(s => {
-    const q = searchQuery.toLowerCase();
-    return s.name.toLowerCase().includes(q) || 
+    // Safety check for search query
+    const q = (searchQuery || '').toLowerCase();
+    
+    // Safety check: Use empty string if name is missing
+    const name = s.name || ''; 
+    
+    return name.toLowerCase().includes(q) || 
            (s.artist && s.artist.toLowerCase().includes(q));
   });
 
@@ -555,7 +560,7 @@ useEffect(() => {
                       
                       <View style={styles.addSongInfo}>
                         <Text style={[styles.addSongName, isSelected && { color: '#FF5500' }]} numberOfLines={1}>
-                          {item.name.replace(/\.[^/.]+$/, '')}
+                          {(item.name || 'Unknown Track').replace(/\.[^/.]+$/, '')}
                         </Text>
                         <Text style={styles.addSongArtist} numberOfLines={1}>
                           {item.artist || 'Unknown Artist'}

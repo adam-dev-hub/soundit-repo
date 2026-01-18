@@ -5,6 +5,8 @@ import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { authService } from '../services/authService';
 import { Home, Music, Download, Cloud } from 'lucide-react-native';
+import { LogBox } from 'react-native';
+
 import {
   configureReanimatedLogger,
   ReanimatedLogLevel,
@@ -12,6 +14,16 @@ import {
 import TrackPlayer from 'react-native-track-player';
 
 export default function RootLayout() {
+  if (__DEV__) {
+  // Hide everything:
+  LogBox.ignoreAllLogs();
+
+  // Or hide only some:
+  // LogBox.ignoreLogs([
+  //   'VirtualizedLists should never be nested',
+  //   /ViewPropTypes will be removed.*/ ,
+  // ]);
+}
   configureReanimatedLogger({
   level: ReanimatedLogLevel.warn,
   strict: false, // Reanimated runs in strict mode by default
